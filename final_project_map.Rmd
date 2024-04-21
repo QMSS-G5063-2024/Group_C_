@@ -13,8 +13,6 @@ library(readr)
 library(dplyr)
 
 ny_house_data <- read_csv("/Users/cyn_chen/Desktop/Group_C_NYCHouse/Data/NY-House-Dataset.csv")
-
-ny_house_data
 ```
 
 ```{r}
@@ -70,8 +68,6 @@ columns_to_drop <- c("label", "ZCTA","pop_est")
 zip_codes_with_prices <- zip_codes_with_prices[, !(names(zip_codes_with_prices) %in% columns_to_drop)]
 
 zip_codes_with_prices$MODZCTA<-as.numeric(zip_codes_with_prices$MODZCTA)
-
-zip_codes_with_prices
 ```
 
 
@@ -84,8 +80,6 @@ ny_house_data_map<-data.frame(
   LONGITUDE=ny_house_data$LONGITUDE,
   LATITUDE=ny_house_data$LATITUDE
 )
-
-ny_house_data_map
 ```
 
 ```{r}
@@ -111,7 +105,7 @@ zip_codes_with_prices <- st_as_sf(zip_codes_with_prices, wkt = "the_geom")
 # Create a color palette based on the average prices
 pal <- colorNumeric(palette = "viridis", domain = zip_codes_with_prices$median_price)
 
-# Create a leaflet map centered over a specific location (e.g., NYC)
+# Create a leaflet map centered over a specific location 
 leaflet_map <- leaflet(data = zip_codes_with_prices) %>%
   addTiles() %>%
   addPolygons(
@@ -125,14 +119,11 @@ leaflet_map <- leaflet(data = zip_codes_with_prices) %>%
   addLegend(
     pal = pal,
     values = zip_codes_with_prices$median_price,
-    title = "Median Price",
+    title = "Median Price Per Sqft",
     position = "bottomright"  # Legend position
   )
 
 # Display the map
 leaflet_map
-```
-```{r}
-str(zip_codes_with_prices)
 ```
 
