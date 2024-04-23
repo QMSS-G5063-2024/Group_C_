@@ -1,6 +1,8 @@
 ---
 title: "final_project_map"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 date: "2024-04-19"
 ---
 
@@ -106,7 +108,7 @@ zip_codes_with_prices <- st_as_sf(zip_codes_with_prices, wkt = "the_geom")
 pal <- colorNumeric(palette = "viridis", domain = zip_codes_with_prices$median_price)
 
 # Create a leaflet map centered over a specific location 
-leaflet_map <- leaflet(data = zip_codes_with_prices) %>%
+p2 <- leaflet(data = zip_codes_with_prices) %>%
   addTiles() %>%
   addPolygons(
     fillColor = ~pal(median_price),  # Color by median_price
@@ -123,7 +125,94 @@ leaflet_map <- leaflet(data = zip_codes_with_prices) %>%
     position = "bottomright"  # Legend position
   )
 
-# Display the map
-leaflet_map
+p2
+```
+
+```{r}
+ny_retail_data <- read.csv("/Users/cyn_chen/Desktop/Group_C_NYCHouse/Data/archive/retail-food-stores.csv")
+
+# Convert relevant columns to numeric
+ny_retail_data$Zip.Code <- as.numeric(ny_retail_data$Zip.Code)
+
+#Select a subset of data interested 
+ny_retail_data <- ny_retail_data %>%
+  select(
+    Name = DBA.Name,
+    EstablishmentType = Establishment.Type,
+    City = City,
+    ZipCode = Zip.Code,
+    Location = Location
+  )
+
+#Mutate the data to etract Latitude and Longtitude
+ny_retail_data <- ny_retail_data %>%
+  mutate(
+    Latitude = as.numeric(str_extract(Location, "(?<='latitude': ')[^']+")) ,
+    Longitude = as.numeric(str_extract(Location, "(?<='longitude': ')[^']+")),
+    Location = NULL
+  )
+
+# For simplicity, remove rows with missing values
+ny_retail_data <- ny_retail_data %>% na.omit()
+```
+
+```{r}
+ny_zip_codes <- zip_codes_with_prices %>%
+  select(ZipCode=MODZCTA)
+
+ny_retail_data <- ny_retail_data%>%
+  filter(ZipCode %in% ny_zip_codes$ZipCode)
+```
+
+```{r}
+p3 <- leaflet(ny_retail_data) %>%
+  addTiles() %>%    
+  addCircleMarkers(lng = ~ny_retail_data$Longitude, lat = ~ny_retail_data$Latitude,
+             popup = ~paste("<b>Name:</b>", ny_retail_data$Name,"<br>",
+                            "<b>Establishment Type:</b> ", ny_retail_data$EstablishmentType,"<br>"),
+               clusterOptions = markerClusterOptions())
+p3
+```
+
+```{r}
+establishments_by_zip <- ny_retail_data %>%
+  group_by(ZipCode) %>%
+  summarise(
+    num_establishments = n_distinct(Name)
+  )
+
+zip_codes_with_num <- left_join(zip_codes_with_prices,establishments_by_zip,by=c("MODZCTA"="ZipCode"))
+
+zip_codes_with_num <- zip_codes_with_num %>% na.omit()
+
+str(zip_codes_with_num)
+```
+
+```{r}
+# Convert the character strings to spatial objects
+zip_codes_with_num <- st_as_sf(zip_codes_with_num, wkt = "the_geom")
+
+# Create a color palette based on the average prices
+pal2 <- colorNumeric(palette = "viridis", domain = zip_codes_with_num$num_establishments)
+
+# Create a leaflet map centered over a specific location 
+p4 <- leaflet(data = zip_codes_with_num) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal2(num_establishments),  # Color by median_price
+    fillOpacity = 0.7,
+    color = "black",  # Border color
+    weight = 1,  # Border thickness
+    popup = ~paste("Zip Code:", MODZCTA, "<br>Number of Retail Establishment:", num_establishments),  # Add popup info
+    highlight = TRUE  # Highlight on hover
+  ) %>%
+  addLegend(
+    pal = pal2,
+    values = zip_codes_with_num$num_establishments,
+    title = "Number of Retail Establishment",
+    position = "bottomright"  
+  )
+
+p4
 ```
 
