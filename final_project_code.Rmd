@@ -1,0 +1,566 @@
+---
+title: "final_project_code"
+output:
+  html_document: default
+  pdf_document: default
+date: "2024-04-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+
+ny_house_data <- read_csv("/Users/annikabb/Desktop/DV-final project/NY-House-Dataset.csv")
+```
+
+```{r}
+# For simplicity, remove rows with missing values
+ny_house_data <- ny_house_data %>% na.omit()
+
+# Convert relevant columns to numeric
+ny_house_data$price <- as.numeric(ny_house_data$PRICE)
+ny_house_data$beds <- as.numeric(ny_house_data$BEDS)
+ny_house_data$bath <- as.numeric(ny_house_data$BATH)
+ny_house_data$propertysqft <- as.numeric(ny_house_data$PROPERTYSQFT)
+
+# Calculate the first quartile (Q1), third quartile (Q3), and IQR
+Q1 <- quantile(ny_house_data$PRICE, 0.25)
+Q3 <- quantile(ny_house_data$PRICE, 0.75)
+IQR <- Q3 - Q1
+
+# Define the lower and upper bounds for outliers
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+# Filter out rows with `PRICE` values outside of the bounds
+ny_house_data <- ny_house_data %>%
+  filter(PRICE >= lower_bound & PRICE <= upper_bound)
+```
+
+```{r}
+#Extracting zip code from column STATE, then store in new column ZIP_CODE
+library(stringr)
+ny_house_data$ZIP_CODE <- str_extract(ny_house_data$STATE, "\\d{5}$")
+
+#Add a new column, price per sqft
+ny_house_data$PRICE_PER_SQFT<-ny_house_data$PRICE/ny_house_data$PROPERTYSQFT
+
+# Group the data frame by ZIP_CODE and calculate the median price
+median_prices_per_sqft <- ny_house_data %>%
+  group_by(ZIP_CODE) %>%
+  summarize(median_price = median(PRICE/PROPERTYSQFT, na.rm = TRUE))
+
+median_prices_per_sqft$ZIP_CODE<-as.integer(median_prices_per_sqft$ZIP_CODE)
+```
+
+```{r}
+#Import Zip Code Boundaries file for New York City
+ny_zipcode_shape<-read.csv("/Users/annikabb/Desktop/DV-final project/Modified_Zip_Code_Tabulation_Areas__MODZCTA_.csv")
+zip_codes_with_prices <- left_join(ny_zipcode_shape,median_prices_per_sqft,by=c("MODZCTA"="ZIP_CODE"))
+
+# Remove rows with missing values
+zip_codes_with_prices <- zip_codes_with_prices[complete.cases(zip_codes_with_prices), ]
+
+# Drop unnecessary columns by name
+columns_to_drop <- c("label", "ZCTA","pop_est")
+zip_codes_with_prices <- zip_codes_with_prices[, !(names(zip_codes_with_prices) %in% columns_to_drop)]
+
+zip_codes_with_prices$MODZCTA<-as.numeric(zip_codes_with_prices$MODZCTA)
+```
+
+
+```{r}
+ny_house_data_map<-data.frame(
+  FORMATTED_ADDRESS=ny_house_data$FORMATTED_ADDRESS,
+  TYPE=ny_house_data$TYPE,
+  TOTAL_PRICE=ny_house_data$PRICE,
+  PRICE_PER_SQFT=ny_house_data$PRICE_PER_SQFT,
+  LONGITUDE=ny_house_data$LONGITUDE,
+  LATITUDE=ny_house_data$LATITUDE
+)
+```
+
+```{r}
+# Calculate the correlation matrix
+correlation_matrix <- ny_house_data %>%
+  select(PROPERTYSQFT, BEDS, BATH, PRICE) %>%
+  cor(use = "pairwise.complete.obs")
+
+# Melt the correlation matrix for plotting
+melted_correlation_matrix <- reshape2::melt(correlation_matrix)
+
+# Plot the heatmap with blue color scheme, improved appearance, centered title, and bold headline
+ggplot(melted_correlation_matrix, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white", size = 0.2) +  # Add white borders to tiles
+  scale_fill_gradient2(low = "#d9f0ff", high = "#4287f5", mid = "white", midpoint = 0, limit = c(-1, 1), space = "Lab", name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels
+        plot.title = element_text(hjust = 0.5, face = "bold")) +  # Center plot title and make it bold
+  labs(x = "", y = "") +  # Remove axis labels
+  ggtitle(bquote(bold("Correlation Heatmap")))  # Set the centered and bold title
+```
+```{r}
+# Calculate average price by house type and sort in increasing order
+average_price_by_type <- ny_house_data %>%
+  group_by(TYPE) %>%
+  summarize(AveragePrice = mean(PRICE, na.rm = TRUE)) %>%
+  arrange(AveragePrice)
+
+# Calculate incremental changes in average price
+average_price_by_type <- average_price_by_type %>%
+  mutate(Incremental = AveragePrice - lag(AveragePrice, default = first(AveragePrice)))
+
+# Create a waterfall chart using ggplot2 with wider bars
+ggplot(average_price_by_type, aes(x = reorder(TYPE, AveragePrice), y = Incremental, fill = Incremental > 0)) +
+  geom_rect(aes(x = TYPE, xmin = as.numeric(as.factor(TYPE)) - 0.4, xmax = as.numeric(as.factor(TYPE)) + 0.4, ymin = lag(cumsum(Incremental), default = 0), ymax = cumsum(Incremental)), 
+            color = "black", fill = ifelse(average_price_by_type$Incremental > 0, "#4287f5", "#d9f0ff")) +
+  labs(
+    title = "Waterfall Chart of Average Price Contributions by House Type",
+    x = "House Type",
+    y = "Incremental Average Price"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title.y = element_text(margin = margin(t = 0, r = 10, b = 0, l = 0))) +
+  scale_fill_manual(values = c("#4287f5", "#d9f0ff"), guide = "none") +  # Blue color scheme
+  ggtitle("Waterfall Chart of Average Price Contributions by House Type")  # Centered and bold title
+```
+
+```{r}
+# Create a boxplot of house prices by house type with a blue color palette
+ggplot(ny_house_data, aes(x = TYPE, y = PRICE, fill = TYPE)) +
+  geom_boxplot() +
+  labs(
+    title = "House Prices by House Type",
+    x = "House Type",
+    y = "Price"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.position = "none") +
+  scale_fill_manual(values = c("#4287f5","#4287f5","#4287f5","#4287f5","#4287f5","#4287f5","#4287f5","#4287f5","#4287f5","#4287f5","#4287f5","#4287f5","#4287f5")) +  # All blue colors
+  ggtitle("House Prices by House Type")  # Centered and bold title
+```
+
+```{r}
+library(leaflet)
+# Create the Leaflet map
+p1 <- leaflet(ny_house_data_map) %>%
+  addTiles() %>%    
+  addCircleMarkers(lng = ~ny_house_data_map$LONGITUDE, lat = ~ny_house_data_map$LATITUDE,
+             popup = ~paste("<b>Address:</b>", ny_house_data$FORMATTED_ADDRESS,"<br>",
+                            "<b>Establishment Type:</b> ", ny_house_data$TYPE,"<br>",
+                            "<b>Price per sqft:</b> ",PRICE_PER_SQFT=ny_house_data$PRICE_PER_SQFT),
+               clusterOptions = markerClusterOptions())
+p1
+```
+
+```{r}
+library(sf)
+library(viridis)
+
+# Convert the character strings to spatial objects
+zip_codes_with_prices <- st_as_sf(zip_codes_with_prices, wkt = "the_geom")
+
+# Create a color palette based on the average prices
+pal <- colorNumeric(palette = "viridis", domain = zip_codes_with_prices$median_price)
+
+# Create a leaflet map centered over a specific location 
+p2 <- leaflet(data = zip_codes_with_prices) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal(median_price),  # Color by median_price
+    fillOpacity = 0.7,
+    color = "black",  # Border color
+    weight = 1,  # Border thickness
+    popup = ~paste("Zip Code:", MODZCTA, "<br>Median Price:", median_price),  # Add popup info
+    highlight = TRUE  # Highlight on hover
+  ) %>%
+  addLegend(
+    pal = pal,
+    values = zip_codes_with_prices$median_price,
+    title = "Median Price Per Sqft",
+    position = "bottomright"  # Legend position
+  )
+
+p2
+```
+
+```{r}
+ny_retail_data <- read.csv("/Users/annikabb/Desktop/DV-final project/retail-food-stores.csv")
+
+# Convert relevant columns to numeric
+ny_retail_data$Zip.Code <- as.numeric(ny_retail_data$Zip.Code)
+
+#Select a subset of data interested 
+ny_retail_data <- ny_retail_data %>%
+  select(
+    Name = DBA.Name,
+    EstablishmentType = Establishment.Type,
+    City = City,
+    ZipCode = Zip.Code,
+    Location = Location
+  )
+
+#Mutate the data to etract Latitude and Longtitude
+ny_retail_data <- ny_retail_data %>%
+  mutate(
+    Latitude = as.numeric(str_extract(Location, "(?<='latitude': ')[^']+")) ,
+    Longitude = as.numeric(str_extract(Location, "(?<='longitude': ')[^']+")),
+    Location = NULL
+  )
+
+# For simplicity, remove rows with missing values
+ny_retail_data <- ny_retail_data %>% na.omit()
+```
+
+```{r}
+ny_zip_codes <- zip_codes_with_prices %>%
+  select(ZipCode=MODZCTA)
+
+ny_retail_data <- ny_retail_data%>%
+  filter(ZipCode %in% ny_zip_codes$ZipCode)
+```
+
+```{r}
+p3 <- leaflet(ny_retail_data) %>%
+  addTiles() %>%    
+  addCircleMarkers(lng = ~ny_retail_data$Longitude, lat = ~ny_retail_data$Latitude,
+             popup = ~paste("<b>Name:</b>", ny_retail_data$Name,"<br>",
+                            "<b>Establishment Type:</b> ", ny_retail_data$EstablishmentType,"<br>"),
+               clusterOptions = markerClusterOptions())
+p3
+```
+
+```{r}
+establishments_by_zip <- ny_retail_data %>%
+  group_by(ZipCode) %>%
+  summarise(
+    num_establishments = n_distinct(Name)
+  )
+
+zip_codes_with_num <- left_join(zip_codes_with_prices,establishments_by_zip,by=c("MODZCTA"="ZipCode"))
+
+zip_codes_with_num <- zip_codes_with_num %>% na.omit()
+
+str(zip_codes_with_num)
+```
+
+```{r}
+# Convert the character strings to spatial objects
+zip_codes_with_num <- st_as_sf(zip_codes_with_num, wkt = "the_geom")
+
+# Create a color palette based on the average prices
+pal2 <- colorNumeric(palette = "viridis", domain = zip_codes_with_num$num_establishments)
+
+# Create a leaflet map centered over a specific location 
+p4 <- leaflet(data = zip_codes_with_num) %>%
+  addTiles() %>%
+  addPolygons(
+    fillColor = ~pal2(num_establishments),  # Color by median_price
+    fillOpacity = 0.7,
+    color = "black",  # Border color
+    weight = 1,  # Border thickness
+    popup = ~paste("Zip Code:", MODZCTA, "<br>Number of Retail Establishment:", num_establishments),  # Add popup info
+    highlight = TRUE  # Highlight on hover
+  ) %>%
+  addLegend(
+    pal = pal2,
+    values = zip_codes_with_num$num_establishments,
+    title = "Number of Retail Establishment",
+    position = "bottomright"  
+  )
+
+p4
+```
+```{r}
+retail_food_stores <- read_csv("/Users/annikabb/Desktop/DV-final project/retail-food-stores_sub.csv")
+View(retail_food_stores)
+```
+
+```{r}
+library(stringr)
+
+# Extract zip code from 'Main_address' column in ny_house_data
+ny_house_data <- ny_house_data %>%
+  mutate(Main_address_zip = str_extract(MAIN_ADDRESS, "\\d{5}"))
+
+# Convert 'Zip Code' column in retail_food_stores to character
+retail_food_stores <- retail_food_stores %>%
+  mutate(`Zip Code` = as.character(`Zip Code`))
+
+# Join datasets using 'Zip Code' from retail_food_stores and 'Main_address_zip' from ny_house_data
+combined_data <- inner_join(retail_food_stores, ny_house_data, by = c("Zip Code" = "Main_address_zip"))
+
+# Aggregate the data by zip code, housing price, and use the number of rows as a proxy for the count of retail stores
+aggregated_data <- combined_data %>%
+  group_by(`Zip Code`, PRICE) %>%
+  summarise(Retail_Store_Count = n()) %>%
+  ungroup()
+```
+
+```{r}
+# Create a scatter plot
+ggplot(aggregated_data, aes(x = `Zip Code`, y = PRICE, color = Retail_Store_Count)) +
+  geom_point() +
+  labs(
+    title = "Scatter Plot of Neighborhood Housing Price vs. Retail Store Count",
+    x = "Zip Code",
+    y = "Neighborhood Housing Price",
+    color = "Retail Store Count"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+  )
+```
+
+```{r}
+library(readr)
+library(dplyr)  
+library(tidyverse)  
+library(ggplot2)  
+library(plotly)   
+library(lubridate)  
+```
+
+Load dataset
+```{r}
+ny_house_data <- read_csv("NY-House-Dataset.csv", show_col_types = FALSE)
+head(ny_house_data)
+```
+
+```{r}
+# For simplicity, remove rows with missing values
+ny_house_data <- ny_house_data %>% na.omit()
+
+# Convert relevant columns to numeric
+ny_house_data$price <- as.numeric(ny_house_data$PRICE)
+ny_house_data$beds <- as.numeric(ny_house_data$BEDS)
+ny_house_data$bath <- as.numeric(ny_house_data$BATH)
+ny_house_data$propertysqft <- as.numeric(ny_house_data$PROPERTYSQFT)
+
+# Calculate the first quartile (Q1), third quartile (Q3), and IQR
+Q1 <- quantile(ny_house_data$PRICE, 0.25)
+Q3 <- quantile(ny_house_data$PRICE, 0.75)
+IQR <- Q3 - Q1
+
+# Define the lower and upper bounds for outliers
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+# Filter out rows with `PRICE` values outside of the bounds
+ny_house_data <- ny_house_data %>%
+  filter(PRICE >= lower_bound & PRICE <= upper_bound)
+```
+
+```{r}
+# Count the number of occurrences of each property type
+property_counts <- ny_house_data %>%
+  count(TYPE, sort = TRUE)  # Count and sort by the number of each type
+
+# Create an interactive bar chart
+interactive_bar_chart <- plot_ly(data = property_counts, x = ~TYPE, y = ~n, type = 'bar', marker = list(color = 'rgb(158,202,225)', line = list(color = 'rgb(8,48,107)', width = 1.5))) %>%
+  layout(title = "Property Type Counts", xaxis = list(title = "Property Type"), yaxis = list(title = "Count"))
+
+# Display the interactive plot
+interactive_bar_chart
+```
+
+```{r}
+# Summary statistics for each broker
+broker_summary <- ny_house_data %>%
+  group_by(BROKERTITLE) %>%
+  summarise(
+    Average_Price = mean(PRICE, na.rm = TRUE),
+    Median_Price = median(PRICE, na.rm = TRUE),
+    Min_Price = min(PRICE, na.rm = TRUE),
+    Max_Price = max(PRICE, na.rm = TRUE),
+    Count = n()
+  ) %>%
+  arrange(desc(Average_Price))  # Arrange by average price in descending order
+
+# View the summary
+print(broker_summary)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Calculate median prices and rank brokers
+broker_ranks <- ny_house_data %>%
+  group_by(BROKERTITLE) %>%
+  summarise(Median_Price = median(PRICE, na.rm = TRUE), .groups = 'drop') %>%
+  arrange(desc(Median_Price))
+
+top_brokers <- head(broker_ranks, 10)$BROKERTITLE
+bottom_brokers <- tail(broker_ranks, 10)$BROKERTITLE
+
+# Filter data for top and bottom brokers
+top_bottom_data <- ny_house_data %>%
+  filter(BROKERTITLE %in% c(top_brokers, bottom_brokers))
+
+
+library(ggplot2)
+library(plotly)
+
+# Creating Scatter Plot
+scatter_plot <- ggplot(top_bottom_data, aes(x = PROPERTYSQFT, y = PRICE, color = BROKERTITLE)) +
+  geom_point(alpha = 0.6) +
+  scale_color_manual(values = rep("blue", 20)) +
+  labs(title = "Scatter Plot of House Prices vs. Property Square Footage",
+       x = "Property Square Footage (sq ft)",
+       y = "House Price") +
+  theme_minimal() +
+  theme(legend.position = "top", 
+        legend.text = element_text(size = 10),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggplotly(scatter_plot)
+
+
+
+
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+# Calculate median prices for each broker and identify top 10 and bottom 10
+broker_medians <- ny_house_data %>%
+  group_by(BROKERTITLE) %>%
+  summarise(Median_Price = median(PRICE, na.rm = TRUE), .groups = 'drop') %>%
+  arrange(Median_Price)
+
+top10_brokers <- head(broker_medians, 10)
+bottom10_brokers <- tail(broker_medians, 10)
+
+# Combine top 10 and bottom 10 brokers
+selected_brokers <- rbind(top10_brokers, bottom10_brokers)
+selected_broker_titles <- selected_brokers$BROKERTITLE
+
+# Filter the original dataset to only include these brokers
+filtered_data <- ny_house_data %>%
+  filter(BROKERTITLE %in% selected_broker_titles)
+
+
+
+# Define price bins
+filtered_data$Price_Bin <- cut(filtered_data$PRICE, breaks = seq(min(filtered_data$PRICE), max(filtered_data$PRICE), by = 50000), include.lowest = TRUE)
+
+# Calculate the number of properties within each price range for each broker
+price_distribution <- filtered_data %>%
+  group_by(BROKERTITLE, Price_Bin) %>%
+  summarise(Count = n(), .groups = 'drop')
+
+# Create a heatmap
+heatmap_plot <- ggplot(price_distribution, aes(x = BROKERTITLE, y = Price_Bin, fill = Count)) +
+  geom_tile() +  # Fill with tiles
+  scale_fill_gradient(low = "lightblue", high = "darkblue", name = "Count") +  # Blue gradient
+  labs(title = "House Price Distribution Heatmap by Broker", x = "Broker", y = "Price Range") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for readability
+        legend.position = "right")
+
+# Display the heatmap
+print(heatmap_plot)
+ggsave("Broker_Price_Heatmap.png", heatmap_plot, width = 10, height = 6, dpi = 300)
+
+
+
+
+
+
+```
+
+Shiny App
+
+```{r}
+library(shiny)
+library(leaflet)
+library(dplyr)
+
+ui <- fluidPage(
+  titlePanel("Interactive Map of NYC House Listings"),
+  sidebarLayout(
+    sidebarPanel(
+      selectizeInput("broker", "Select Broker:", choices = c("All", unique(ny_house_data$BROKERTITLE)), options = list(server = TRUE)),
+      selectizeInput("type", "Type of House:", choices = unique(ny_house_data$TYPE), options = list(server = TRUE)),
+      sliderInput("bedrooms", "Number of Bedrooms:",
+                  min = min(ny_house_data$BEDS, na.rm = TRUE),
+                  max = max(ny_house_data$BEDS, na.rm = TRUE),
+                  value = c(min(ny_house_data$BEDS, na.rm = TRUE), max(ny_house_data$BEDS, na.rm = TRUE)),
+                  step = 1),
+      checkboxGroupInput("mapType", "Map Type:", choices = c("Markers", "Heatmap")),
+      width = 3
+    ),
+    mainPanel(
+      leafletOutput("map"),
+      width = 9
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  filtered_data <- reactive({
+    data <- ny_house_data
+    if (input$broker != "All") {
+      data <- data %>% filter(BROKERTITLE == input$broker)
+    }
+    data <- data %>%
+      filter(TYPE == input$type, BEDS >= input$bedrooms[1], BEDS <= input$bedrooms[2])
+    data
+  })
+  
+  output$map <- renderLeaflet({
+    leaflet() %>%
+      addProviderTiles(providers$CartoDB.Positron) %>%
+      setView(lng = -74.0060, lat = 40.7128, zoom = 12)  # Coordinates for NYC center
+  })
+  
+  observe({
+    map <- leafletProxy("map", data = filtered_data())
+    map %>% clearMarkers() %>% clearShapes()
+    if ("Markers" %in% input$mapType) {
+      map %>% addMarkers(
+        lng = ~LONGITUDE, lat = ~LATITUDE,
+        popup = ~paste("<strong>Price:</strong>", PRICE,
+                       "<br><strong>Beds:</strong>", BEDS,
+                       "<br><strong>Bath:</strong>", BATH,
+                       "<br><strong>Broker:</strong>", BROKERTITLE))
+    }
+    if ("Heatmap" %in% input$mapType) {
+      map %>% addHeatmap(
+        lng = ~LONGITUDE, lat = ~LATITUDE, intensity = ~PRICE,
+        blur = 20, max = 0.05)
+    }
+  })
+}
+
+shinyApp(ui, server)
+```
+
+
+
+
+
+
+
+
+
+
+
+
